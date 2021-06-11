@@ -14,7 +14,7 @@ The POA Bridge allows users to transfer assets between two chains in the Ethereu
 
 **Bridge Elements**
 1. Solidity smart contracts, contained in this repository.
-2. [Token Bridge](https://github.com/poanetwork/token-bridge). A NodeJS oracle responsible for listening to events and sending transactions to authorize asset transfers.
+2. [TokenBridge](https://github.com/poanetwork/tokenbridge). A NodeJS oracle responsible for listening to events and sending transactions to authorize asset transfers.
 3. [Bridge UI Application](https://github.com/poanetwork/bridge-ui). A DApp interface to transfer tokens and coins between chains.
 4. [Bridge Monitor](https://github.com/poanetwork/bridge-monitor). A tool for checking balances and unprocessed events in bridged networks.
 5. [Bridge Deployment Playbooks](https://github.com/poanetwork/deployment-bridge). Manages configuration instructions for remote deployments.
