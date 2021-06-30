@@ -79,8 +79,7 @@ contract BasicHomeAMB is BasicAMB, MessageDelivery {
         require(!isAlreadyProcessed(signed));
         // the check above assumes that the case when the value could be overflew
         // will not happen in the addition operation below
-        signed = signed + 1;
-        if (signed > 1) {
+        if (signed > 0) {
             // Duplicated signatures
             require(!messagesSigned(hashSender));
         } else {
@@ -88,10 +87,9 @@ contract BasicHomeAMB is BasicAMB, MessageDelivery {
         }
         setMessagesSigned(hashSender, true);
 
-        bytes32 signIdx = keccak256(abi.encodePacked(hashMsg, (signed.sub(1))));
-        setSignatures(signIdx, signature);
+        setSignatures(hashMsg, signed, signature);
 
-        setNumMessagesSigned(hashMsg, signed);
+        setNumMessagesSigned(hashMsg, ++signed);
 
         emit SignedForUserRequest(msg.sender, hashMsg);
 
@@ -100,6 +98,47 @@ contract BasicHomeAMB is BasicAMB, MessageDelivery {
             setNumMessagesSigned(hashMsg, markAsProcessed(signed));
             emit CollectedSignatures(msg.sender, hashMsg, reqSigs);
         }
+    }
+
+    /**
+     * @dev Request bridge validators to recollect the signatures for the message.
+     * Should be called for yet non-executed message, for which signatures were already collected, however knw they are invalid.
+     * This can happen in case of validators removal or increase in the required signatures threshold.
+     * Re-emits the UserRequestForSignature event. Removes all invalid signatures from the storage.
+     * @param _message blob with the already sent message.
+     */
+    function requestMessageReconfirm(bytes _message) public {
+        bytes32 hashMsg = keccak256(abi.encodePacked(_message));
+
+        uint256 signed = numMessagesSigned(hashMsg);
+        require(isAlreadyProcessed(signed));
+        signed -= 2**255;
+
+        IBridgeValidators vc = validatorContract();
+        uint256 valid = 0;
+        for (uint256 i = 0; i < signed; i++) {
+            bytes memory sig = signature(hashMsg, i);
+            address signer = Message.recoverAddressFromSignedMessage(sig, _message, true);
+            if (vc.isValidator(signer)) {
+                if (valid < i) {
+                    setSignatures(hashMsg, valid, sig);
+                }
+                valid++;
+            } else {
+                bytes32 hashSigner = keccak256(abi.encodePacked(signer, hashMsg));
+                setMessagesSigned(hashSigner, false);
+            }
+        }
+
+        require(valid < requiredSignatures());
+
+        setNumMessagesSigned(hashMsg, valid);
+
+        bytes32 messageId;
+        assembly {
+            messageId := mload(add(_message, 32))
+        }
+        emitEventOnMessageRequest(messageId, _message);
     }
 
     function isAlreadyProcessed(uint256 _number) public pure returns (bool) {
@@ -139,8 +178,9 @@ contract BasicHomeAMB is BasicAMB, MessageDelivery {
         return bytesStorage[keccak256(abi.encodePacked("messages", _hash))];
     }
 
-    function setSignatures(bytes32 _hash, bytes _signature) internal {
-        bytesStorage[keccak256(abi.encodePacked("signatures", _hash))] = _signature;
+    function setSignatures(bytes32 _hash, uint256 _index, bytes _signature) internal {
+        bytes32 signIdx = keccak256(abi.encodePacked(_hash, _index));
+        bytesStorage[keccak256(abi.encodePacked("signatures", signIdx))] = _signature;
     }
 
     function setMessages(bytes32 _hash, bytes _message) internal {

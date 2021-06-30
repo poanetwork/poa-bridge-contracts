@@ -1035,4 +1035,97 @@ contract('HomeAMB', async accounts => {
       expect(await box.status()).to.be.equal(false)
     })
   })
+  describe('requestMessageReconfirm', () => {
+    let homeBridge
+    let box
+    let validatorContract
+    let message
+    let msgHash
+
+    const user = accounts[8]
+
+    beforeEach(async () => {
+      const homeBridgeV1 = await HomeAMB.new()
+      const proxy = await EternalStorageProxy.new()
+      await proxy.upgradeTo('1', homeBridgeV1.address).should.be.fulfilled
+      homeBridge = await HomeAMB.at(proxy.address)
+
+      validatorContract = await BridgeValidators.new()
+      await validatorContract.initialize(1, [accounts[1]], owner)
+
+      await homeBridge.initialize(
+        HOME_CHAIN_ID_HEX,
+        FOREIGN_CHAIN_ID_HEX,
+        validatorContract.address,
+        oneEther,
+        gasPrice,
+        requiredBlockConfirmations,
+        owner
+      )
+
+      box = await Box.new()
+
+      const setValueData = box.contract.methods.setValue(3).encodeABI()
+      const res = await homeBridge.requireToPassMessage(box.address, setValueData, 821254, { from: user })
+      message = res.logs[0].args.encodedData
+      msgHash = web3.utils.soliditySha3(message)
+    })
+
+    it('should request and process message reconfirmations when required threshold is changed', async () => {
+      const signature1 = await sign(accounts[1], message)
+
+      await homeBridge.submitSignature(signature1, message, { from: accounts[1] }).should.be.fulfilled
+      await homeBridge.requestMessageReconfirm(message).should.be.rejected
+      await validatorContract.addValidator(accounts[2]).should.be.fulfilled
+      await validatorContract.setRequiredSignatures(2).should.be.fulfilled
+      const { logs } = await homeBridge.requestMessageReconfirm(message).should.be.fulfilled
+      expectEventInLogs(logs, 'UserRequestForSignature', {
+        messageId: message.slice(0, 66),
+        encodedData: message
+      })
+
+      expect(await homeBridge.message(msgHash)).to.be.equal(message)
+      expect(await homeBridge.signature(msgHash, 0)).to.be.equal(signature1)
+      expect(await homeBridge.numMessagesSigned(msgHash)).to.be.bignumber.equal('1')
+
+      const signature2 = await sign(accounts[2], message)
+      await homeBridge.submitSignature(signature2, message, { from: accounts[2] }).should.be.fulfilled
+      await homeBridge.submitSignature(signature2, message, { from: accounts[2] }).should.be.rejected
+
+      expect(await homeBridge.signature(msgHash, 0)).to.be.equal(signature1)
+      expect(await homeBridge.signature(msgHash, 1)).to.be.equal(signature2)
+      expect(await homeBridge.numMessagesSigned(msgHash)).to.be.bignumber.gt('10000')
+
+      expect(await homeBridge.messagesSigned(web3.utils.soliditySha3(accounts[1], msgHash))).to.be.equal(true)
+      expect(await homeBridge.messagesSigned(web3.utils.soliditySha3(accounts[2], msgHash))).to.be.equal(true)
+    })
+
+    it('should request and process message reconfirmations when validator is removed', async () => {
+      const signature1 = await sign(accounts[1], message)
+
+      await homeBridge.submitSignature(signature1, message, { from: accounts[1] }).should.be.fulfilled
+      await homeBridge.requestMessageReconfirm(message).should.be.rejected
+      await validatorContract.addValidator(accounts[2]).should.be.fulfilled
+      await validatorContract.removeValidator(accounts[1]).should.be.fulfilled
+      const { logs } = await homeBridge.requestMessageReconfirm(message).should.be.fulfilled
+      expectEventInLogs(logs, 'UserRequestForSignature', {
+        messageId: message.slice(0, 66),
+        encodedData: message
+      })
+
+      expect(await homeBridge.message(msgHash)).to.be.equal(message)
+      expect(await homeBridge.signature(msgHash, 0)).to.be.equal(signature1)
+      expect(await homeBridge.numMessagesSigned(msgHash)).to.be.bignumber.equal('0')
+
+      const signature2 = await sign(accounts[2], message)
+      await homeBridge.submitSignature(signature2, message, { from: accounts[2] }).should.be.fulfilled
+      await homeBridge.submitSignature(signature2, message, { from: accounts[2] }).should.be.rejected
+
+      expect(await homeBridge.signature(msgHash, 0)).to.be.equal(signature2)
+      expect(await homeBridge.numMessagesSigned(msgHash)).to.be.bignumber.gt('10000')
+
+      expect(await homeBridge.messagesSigned(web3.utils.soliditySha3(accounts[1], msgHash))).to.be.equal(false)
+      expect(await homeBridge.messagesSigned(web3.utils.soliditySha3(accounts[2], msgHash))).to.be.equal(true)
+    })
+  })
 })
